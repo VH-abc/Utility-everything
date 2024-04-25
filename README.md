@@ -15,6 +15,6 @@ To use elo_optimizer.py from your own file:
 - Interact with it as follows:  
       - Use the Item() and Lottery() constructors to create items and lotteries  
       - Use add_result() to add results (don't use the Result constuctor directly)  
-      - Items, Lotteries, and Results have delete() methods. The delete() method removes an object, its dependents, and its parameters from global lists.
+      - Items, Lotteries, and Results have delete() methods. The delete() method removes an object, its dependents, and its parameters from global lists.  
       - Call optimization methods as needed to recompute the best fit utilities and temperatures. Currently only full_batch_optimize() exists.  
       - Interact directly with the global lists for other operations  
