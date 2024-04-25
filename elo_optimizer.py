@@ -222,6 +222,6 @@ def test_full_batch_optimize():
     print([round_(item.temperature()) for item in items])
 
 if __name__ == "__main__":
-    #test_full_batch_optimize()
+    test_full_batch_optimize()
     pass
     
