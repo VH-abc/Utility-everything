@@ -35,7 +35,12 @@ class Item:
 
     def delete(self):
         PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
+        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        for l in LOTTERIES:
+            if self in l.items:
+                l.delete()
         ITEMS.remove(self)
+        
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
@@ -55,9 +60,11 @@ class Lottery:
         self.items = items
         # Normalize weights to sum to 1
         self.weights = torch.tensor(weights, requires_grad=False) / sum(weights)
+        LOTTERIES.append(self)
 
     def delete(self):
-        pass
+        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        LOTTERIES.remove(self)
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
@@ -75,6 +82,7 @@ class Result:
 
 # GLOBALS
 ITEMS:list[Item] = []
+LOTTERIES:list[Lottery] = [] # WARNING: Currently unused and untested
 RESULTS:list[Result] = []
 PARAMETERS:list[torch.Tensor] = []
 MODE = "compound" # "compound" or "overwrite" (mode for adding results for pairs that have already been played)
