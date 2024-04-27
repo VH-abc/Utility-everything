@@ -93,7 +93,7 @@ class Result:
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
     def delete(self):
-        RESULTS.remove(self)
+        RESULTS[:] = [r for r in RESULTS if r != self]
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -142,7 +142,7 @@ def full_batch_optimize(steps:int, lr:float,
         opt.step()
         # Clamp temperatures
         for item in ITEMS:
-            item.params["log_temp"].clamp_(np.log(min_temperature), np.log(max_temperature))
+            item.params["log_temp"].data.clamp_(np.log(min_temperature), np.log(max_temperature))
 
 '''
 Notes on temperature behavior:
