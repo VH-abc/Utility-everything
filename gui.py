@@ -20,6 +20,9 @@ import tkinter as tk
 from tkinter import simpledialog
 import random
 
+def list_filter(f, lst):
+    return [*filter(f, lst)]
+
 class Node:
     def __init__(self, canvas:tk.Canvas, item:Item|Lottery, 
                  x:float, y:float,
