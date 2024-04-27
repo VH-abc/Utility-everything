@@ -79,7 +79,7 @@ class Lottery:
 
     def delete(self):
         RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
-        LOTTERIES.remove(self)
+        LOTTERIES[:] = [l for l in LOTTERIES if l != self]
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
