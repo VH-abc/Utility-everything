@@ -14,50 +14,24 @@ To use elo_optimizer.py from your own file:
     - Interact directly with the global lists for other operations  
 '''
 import numpy as np
-from numpy import log
 import torch
-from torch import stack, logsumexp, tensor
+from torch import stack, logsumexp
 from torch.nn.functional import log_softmax
 from dataclasses import dataclass
 from typing import Iterable, Callable
 
-def purify(lst, condition:Callable):
-    lst[:] = [*filter(condition, lst)]
+def list_filter(f:Callable, lst:Iterable) -> list:
+    '''Same as filter, but returns a list instead of filter object.\n\nShorthand for [x for x in lst if f(x)].'''
+    return [x for x in lst if f(x)]
 
-# Uses *is* if to_remove is an iterable (not "==" or "in")
-def remove_from(lst, to_remove: Iterable | Callable):
-    if isinstance(to_remove, Iterable):
-        to_remove = lambda x, banned=to_remove: any(x is y for y in banned)
-    purify(lst, lambda x: not to_remove(x))
-
-class GlobalListMember:
-    def __init__(self, globals:Iterable[list], dependencies:Iterable["GlobalListMember"]):
-        self.globals = globals
-        for lst in globals:
-            lst.append(self)
-        self.dependents = []
-        for dep in dependencies:
-            dep.dependents.append(self)
-        self.alive = True
-    def delete(self):
-        for lst in self.globals:
-            lst.remove(self)
-        self.alive = False
-        for dep in self.dependents:
-            if dep.alive:
-                dep.delete()
-
-class IL_base(GlobalListMember):
-    def normalized_elo(self):
-        return self.elo() - torch.median(stack([item.elo() for item in ITEMS]))
-                
-class Item(IL_base):
+class Item:
     def store(self, elo, temperature):
+        elo = float(elo)
         # Remove old parameters from PARAMETERS
-        remove_from(PARAMETERS, self.parameters())
+        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
         # Store new parameters
-        self.params["elo"] = torch.tensor(float(elo), requires_grad=True)
-        self.params["log_temp"] = torch.tensor(log(temperature), requires_grad=True)
+        self.params["elo"] = torch.tensor(elo, requires_grad=True)
+        self.params["log_temp"] = torch.tensor(np.log(temperature), requires_grad=True)
         PARAMETERS.extend(self.parameters())
 
     def elo(self):
@@ -70,42 +44,56 @@ class Item(IL_base):
     
     def __init__(self, name:str, elo, temperature):
         self.name = name
-        self.params:dict[str, torch.Tensor] = {}
+        self.params = {}
         self.store(elo, temperature) # This also adds the parameters to PARAMETERS
-        super().__init__(globals=[ITEMS], dependencies=[])
+        ITEMS.append(self)
 
     def delete(self):
-        remove_from(PARAMETERS, self.parameters())
-        super().delete()
+        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
+        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        for l in LOTTERIES:
+            if self in l.items:
+                l.delete()
+        ITEMS.remove(self)
+        
+    def normalized_elo(self):
+        median = torch.median(stack([item.elo() for item in ITEMS]))
+        return self.elo() - median
     
-class Lottery(IL_base):
+class Lottery:
     def elo(self):
         return torch.sum(self.weights * stack([item.elo() for item in self.items]))
     def temperature(self):
         # Multiply temperatures by weights then logsumexp
         temps = stack([item.temperature() for item in self.items])
         return logsumexp(self.weights * temps, dim=0)
-
+    
     def __init__(self, items:Iterable[Item], weights, name_joiner:str="+"):
         assert len(items) == len(weights) > 0 and all(isinstance(item, Item) for item in items)
         name_array = [f"{weight}*{item.name}" for item, weight in zip(items, weights)]
         self.name = name_joiner.join(name_array)
         self.items = items
-        self.weights = torch.tensor(weights, requires_grad=False)
-        assert torch.all(self.weights >= 0) and torch.isclose(torch.sum(self.weights), torch.tensor(1.0))
-        super().__init__(globals=[LOTTERIES], dependencies=items)
+        # Normalize weights to sum to 1
+        self.weights = torch.tensor(weights, requires_grad=False) / sum(weights)
+        LOTTERIES.append(self)
 
+    def delete(self):
+        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        LOTTERIES.remove(self)
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
 
+@dataclass
 # Note: Always create a new result with add_result (assuming you want it to be stored to RESULTS)
-class Result(GlobalListMember):
-    def __init__(self, winner:Item|Lottery, loser:Item|Lottery, n_copies:int=1):
-        self.winner, self.loser, self.n_copies = winner, loser, n_copies
-        super().__init__(globals=[RESULTS], dependencies=[winner, loser])
+class Result:
+    winner: Item | Lottery
+    loser: Item | Lottery
+    n_copies: int = 1
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
+    def delete(self):
+        RESULTS.remove(self)
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -121,10 +109,11 @@ def add_result(winner:Item, loser:Item):
             if r.winner == winner and r.loser == loser:
                 r.n_copies += 1
                 return r
+        RESULTS.append(Result(winner, loser))
     elif MODE == "overwrite":
-        same_pair = lambda x: (x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner)
-        remove_from(RESULTS, same_pair)
-    return Result(winner, loser)
+        different_pair = lambda x: {x.winner, x.loser} != {winner, loser}
+        RESULTS[:] = list_filter(different_pair, RESULTS) + [Result(winner, loser)]
+    return RESULTS[-1]
 
 def logP(winner, loser):
     temps = stack([winner.temperature(), loser.temperature()])
@@ -143,15 +132,24 @@ def full_batch_optimize(steps:int, lr:float,
     opt = torch.optim.Adam(PARAMETERS, lr=lr)
     for i in range(steps):
         opt.zero_grad()
-        (l := loss(RESULTS)).backward()
+        l = loss(RESULTS)
+        l.backward()
         # Print stuff
         if print_rule(i):
-            print(f"Step {i}, loss {l}, grad_norm {torch.sqrt(sum(torch.norm(param.grad)**2 for param in PARAMETERS))}")
+            grad_norm = torch.sqrt(sum(torch.norm(param.grad)**2 for param in PARAMETERS))
+            print(f"Step {i}, loss {l}, grad_norm {grad_norm}")
         # Take a step
         opt.step()
-        # Clamp temperatures
+        # Clamp temperatures in a way that preserves gradients
         for item in ITEMS:
-            item.params["log_temp"].data.clamp_(log(min_temperature), log(max_temperature))
+            tensor = item.params["log_temp"]
+            if tensor < np.log(min_temperature):
+                correction = (np.log(min_temperature) - tensor).detach()
+                tensor.data += correction
+            if tensor > np.log(max_temperature):
+                correction = (np.log(max_temperature) - tensor).detach()
+                tensor.data += correction
+
 
 '''
 Notes on temperature behavior:
