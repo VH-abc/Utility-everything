@@ -27,8 +27,8 @@ def purify(lst, condition:Callable):
 class Deletable:
     def delete(self):
         for lst in [ITEMS, LOTTERIES, RESULTS]:
-            lst.remove(self)
-        purify(RESULTS, lambda r: self not in {r.winner, r.loser})
+            purify(lst, lambda x: x != self)
+        purify(RESULTS, lambda r: self not in [r.winner, r.loser])
 
 class IL_base(Deletable):
     def normalized_elo(self):
@@ -84,7 +84,7 @@ class Lottery(IL_base):
 
 @dataclass
 # Note: Always create a new result with add_result (assuming you want it to be stored to RESULTS)
-class Result:
+class Result(Deletable):
     winner: Item | Lottery
     loser: Item | Lottery
     n_copies: int = 1
@@ -136,7 +136,7 @@ def full_batch_optimize(steps:int, lr:float,
         opt.step()
         # Clamp temperatures
         for item in ITEMS:
-            item.params["log_temp"].clamp_(log(min_temperature), log(max_temperature))
+            item.params["log_temp"].data.clamp_(log(min_temperature), log(max_temperature))
             
 
 '''
