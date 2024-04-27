@@ -20,15 +20,14 @@ from torch.nn.functional import log_softmax
 from dataclasses import dataclass
 from typing import Iterable, Callable
 
-def list_filter(f:Callable, lst:Iterable) -> list:
-    '''Same as filter, but returns a list instead of filter object.\n\nShorthand for [x for x in lst if f(x)].'''
-    return [x for x in lst if f(x)]
+def purify(lst, condition:Callable):
+    lst[:] = [*filter(condition, lst)]
 
 class Item:
     def store(self, elo, temperature):
         elo = float(elo)
         # Remove old parameters from PARAMETERS
-        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
+        purify(PARAMETERS, lambda p: p not in self.parameters())
         # Store new parameters
         self.params["elo"] = torch.tensor(elo, requires_grad=True)
         self.params["log_temp"] = torch.tensor(np.log(temperature), requires_grad=True)
@@ -49,8 +48,8 @@ class Item:
         ITEMS.append(self)
 
     def delete(self):
-        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
-        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        purify(PARAMETERS, lambda p: p not in self.parameters())
+        purify(RESULTS, lambda r: self not in [r.winner, r.loser])
         for l in LOTTERIES:
             if self in l.items:
                 l.delete()
@@ -78,8 +77,8 @@ class Lottery:
         LOTTERIES.append(self)
 
     def delete(self):
-        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
-        LOTTERIES[:] = [l for l in LOTTERIES if l != self]
+        purify(RESULTS, lambda r: self not in [r.winner, r.loser])
+        purify(LOTTERIES, lambda l: l != self)
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
@@ -93,7 +92,7 @@ class Result:
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
     def delete(self):
-        RESULTS[:] = [r for r in RESULTS if r != self]
+        purify(RESULTS, lambda r: r != self)
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -109,10 +108,10 @@ def add_result(winner:Item, loser:Item):
             if r.winner == winner and r.loser == loser:
                 r.n_copies += 1
                 return r
-        RESULTS.append(Result(winner, loser))
     elif MODE == "overwrite":
-        different_pair = lambda x: {x.winner, x.loser} != {winner, loser}
-        RESULTS[:] = list_filter(different_pair, RESULTS) + [Result(winner, loser)]
+        different_pair = lambda x: not ((x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner))
+        purify(RESULTS, different_pair)
+    RESULTS.append(Result(winner, loser))
     return RESULTS[-1]
 
 def logP(winner, loser):

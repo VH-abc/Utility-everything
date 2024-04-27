@@ -20,6 +20,10 @@ import tkinter as tk
 from tkinter import simpledialog
 import random
 
+def list_filter(f:Callable, lst:Iterable) -> list:
+    '''Same as filter, but returns a list instead of filter object.\n\nShorthand for [x for x in lst if f(x)].'''
+    return [x for x in lst if f(x)]
+
 class Node:
     def __init__(self, canvas:tk.Canvas, item:Item|Lottery, 
                  x:float, y:float,
