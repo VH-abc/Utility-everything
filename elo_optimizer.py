@@ -21,14 +21,24 @@ from torch.nn.functional import log_softmax
 from dataclasses import dataclass
 from typing import Iterable, Callable
 
-def list_filter(f:Callable, lst:Iterable) -> list:
-    '''Same as filter, but returns a list instead of filter object.'''
-    return [*filter(f, lst)]
+def purify(lst, condition:Callable):
+    lst[:] = [*filter(condition, lst)]
 
-class Item:
+class Deletable:
+    def delete(self):
+        for lst in [ITEMS, LOTTERIES, RESULTS]:
+            lst.remove(self)
+        purify(RESULTS, lambda r: self not in {r.winner, r.loser})
+
+class IL_base(Deletable):
+    def normalized_elo(self):
+        median = torch.median(stack([item.elo() for item in ITEMS]))
+        return self.elo() - median
+
+class Item(IL_base):
     def store(self, elo, temperature):
         # Remove old parameters from PARAMETERS
-        PARAMETERS[:] = list_filter(lambda p: p not in self.parameters(), PARAMETERS)
+        PARAMETERS[:] = [*filter(lambda p: p not in self.parameters(), PARAMETERS)]
         # Store new parameters
         self.params["elo"] = tensor(float(elo), requires_grad=True)
         self.params["log_temp"] = tensor(log(temperature), requires_grad=True)
@@ -49,18 +59,13 @@ class Item:
         ITEMS.append(self)
 
     def delete(self):
-        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
-        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
+        super().delete()
+        purify(PARAMETERS, lambda p: p not in self.parameters())
         for l in LOTTERIES:
             if self in l.items:
                 l.delete()
-        ITEMS.remove(self)
-        
-    def normalized_elo(self):
-        median = torch.median(stack([item.elo() for item in ITEMS]))
-        return self.elo() - median
     
-class Lottery:
+class Lottery(IL_base):
     def elo(self):
         return torch.sum(self.weights * stack([item.elo() for item in self.items]))
     def temperature(self):
@@ -77,13 +82,6 @@ class Lottery:
         self.weights = tensor(weights, requires_grad=False) / sum(weights)
         LOTTERIES.append(self)
 
-    def delete(self):
-        RESULTS[:] = [r for r in RESULTS if r.winner != self and r.loser != self]
-        LOTTERIES.remove(self)
-    def normalized_elo(self):
-        median = torch.median(stack([item.elo() for item in ITEMS]))
-        return self.elo() - median
-
 @dataclass
 # Note: Always create a new result with add_result (assuming you want it to be stored to RESULTS)
 class Result:
@@ -92,8 +90,6 @@ class Result:
     n_copies: int = 1
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
-    def delete(self):
-        RESULTS.remove(self)
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -112,7 +108,7 @@ def add_result(winner:Item, loser:Item):
         RESULTS.append(Result(winner, loser))
     elif MODE == "overwrite":
         different_pair = lambda x: {x.winner, x.loser} != {winner, loser}
-        RESULTS[:] = list_filter(different_pair, RESULTS) + [Result(winner, loser)]
+        RESULTS[:] = [*filter(different_pair, RESULTS)] + [Result(winner, loser)]
     return RESULTS[-1]
 
 def logP(winner, loser):
@@ -132,23 +128,24 @@ def full_batch_optimize(steps:int, lr:float,
     opt = torch.optim.Adam(PARAMETERS, lr=lr)
     for i in range(steps):
         opt.zero_grad()
-        l = loss(RESULTS)
-        l.backward()
+        (l := loss(RESULTS)).backward()
         # Print stuff
         if print_rule(i):
-            grad_norm = torch.sqrt(sum(torch.norm(param.grad)**2 for param in PARAMETERS))
-            print(f"Step {i}, loss {l}, grad_norm {grad_norm}")
+            print(f"Step {i}, loss {l}, grad_norm {torch.sqrt(sum(torch.norm(param.grad)**2 for param in PARAMETERS))}")
         # Take a step
         opt.step()
         # Clamp temperatures in a way that preserves gradients
         for item in ITEMS:
             tens = item.params["log_temp"]
+            '''
             if tens < log(min_temperature):
                 correction = (log(min_temperature) - tens).detach()
                 tens.data += correction
             if tens > log(max_temperature):
                 correction = (log(max_temperature) - tens).detach()
                 tens.data += correction
+            '''
+            tens += (torch.clamp(tens, log(min_temperature), log(max_temperature)) - tens).detach()
 
 
 '''
