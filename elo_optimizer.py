@@ -105,10 +105,10 @@ def add_result(winner:Item, loser:Item):
             if r.winner == winner and r.loser == loser:
                 r.n_copies += 1
                 return r
-        RESULTS.append(Result(winner, loser))
     elif MODE == "overwrite":
-        different_pair = lambda x: {x.winner, x.loser} != {winner, loser}
-        RESULTS[:] = [*filter(different_pair, RESULTS)] + [Result(winner, loser)]
+        different_pair = lambda x: not ((x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner))
+        purify(RESULTS, different_pair)
+    RESULTS.append(Result(winner, loser))
     return RESULTS[-1]
 
 def logP(winner, loser):
