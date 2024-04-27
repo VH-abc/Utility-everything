@@ -44,7 +44,7 @@ class Item:
     
     def __init__(self, name:str, elo, temperature):
         self.name = name
-        self.params = {}
+        self.params:dict[str, torch.Tensor] = {}
         self.store(elo, temperature) # This also adds the parameters to PARAMETERS
         ITEMS.append(self)
 
@@ -140,16 +140,9 @@ def full_batch_optimize(steps:int, lr:float,
             print(f"Step {i}, loss {l}, grad_norm {grad_norm}")
         # Take a step
         opt.step()
-        # Clamp temperatures in a way that preserves gradients
+        # Clamp temperatures
         for item in ITEMS:
-            tensor = item.params["log_temp"]
-            if tensor < np.log(min_temperature):
-                correction = (np.log(min_temperature) - tensor).detach()
-                tensor.data += correction
-            if tensor > np.log(max_temperature):
-                correction = (np.log(max_temperature) - tensor).detach()
-                tensor.data += correction
-
+            item.params["log_temp"].clamp_(np.log(min_temperature), np.log(max_temperature))
 
 '''
 Notes on temperature behavior:
