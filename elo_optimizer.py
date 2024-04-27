@@ -38,7 +38,7 @@ class IL_base(Deletable):
 class Item(IL_base):
     def store(self, elo, temperature):
         # Remove old parameters from PARAMETERS
-        PARAMETERS[:] = [*filter(lambda p: p not in self.parameters(), PARAMETERS)]
+        purify(PARAMETERS, lambda p: p not in self.parameters())
         # Store new parameters
         self.params["elo"] = tensor(float(elo), requires_grad=True)
         self.params["log_temp"] = tensor(log(temperature), requires_grad=True)
