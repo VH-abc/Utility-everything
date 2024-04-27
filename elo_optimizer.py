@@ -74,11 +74,11 @@ class Lottery:
     
     def __init__(self, items:Iterable[Item], weights, name_joiner:str="+"):
         assert len(items) == len(weights) > 0 and all(isinstance(item, Item) for item in items)
-        name_array = [f"{weight}*{item.name}" for item, weight in zip(items, weights)]
-        self.name = name_joiner.join(name_array)
         self.items = items
         # Normalize weights to sum to 1
         self.weights = torch.tensor(weights, requires_grad=False) / sum(weights)
+        name_array = [f"{weight}*{item.name}" for item, weight in zip(self.items, self.weights)]
+        self.name = name_joiner.join(name_array)
         LOTTERIES.append(self)
 
     def delete(self):
