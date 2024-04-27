@@ -23,11 +23,16 @@ from typing import Iterable, Callable
 def purify(lst, condition:Callable):
     lst[:] = [*filter(condition, lst)]
 
+def remove_all(lst, to_remove: Iterable | Callable):
+    if isinstance(to_remove, Iterable):
+        to_remove = lambda x: x in to_remove
+    purify(lst, lambda x: not to_remove(x))
+
 class Item:
     def store(self, elo, temperature):
         elo = float(elo)
         # Remove old parameters from PARAMETERS
-        purify(PARAMETERS, lambda p: p not in self.parameters())
+        remove_all(PARAMETERS, self.parameters())
         # Store new parameters
         self.params["elo"] = torch.tensor(elo, requires_grad=True)
         self.params["log_temp"] = torch.tensor(np.log(temperature), requires_grad=True)
@@ -48,8 +53,8 @@ class Item:
         ITEMS.append(self)
 
     def delete(self):
-        purify(PARAMETERS, lambda p: p not in self.parameters())
-        purify(RESULTS, lambda r: self not in [r.winner, r.loser])
+        remove_all(PARAMETERS, self.parameters())
+        remove_all(RESULTS, lambda r: self in [r.winner, r.loser])
         for l in LOTTERIES:
             if self in l.items:
                 l.delete()
@@ -77,8 +82,8 @@ class Lottery:
         LOTTERIES.append(self)
 
     def delete(self):
-        purify(RESULTS, lambda r: self not in [r.winner, r.loser])
-        purify(LOTTERIES, lambda l: l != self)
+        remove_all(RESULTS, lambda r: self in [r.winner, r.loser])
+        remove_all(LOTTERIES, [self])
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
@@ -92,7 +97,7 @@ class Result:
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
     def delete(self):
-        purify(RESULTS, lambda r: r != self)
+        remove_all(RESULTS, [self])
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -109,8 +114,8 @@ def add_result(winner:Item, loser:Item):
                 r.n_copies += 1
                 return r
     elif MODE == "overwrite":
-        different_pair = lambda x: not ((x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner))
-        purify(RESULTS, different_pair)
+        same_pair = lambda x: (x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner)
+        remove_all(RESULTS, same_pair)
     RESULTS.append(Result(winner, loser))
     return RESULTS[-1]
 
