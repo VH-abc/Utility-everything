@@ -134,19 +134,10 @@ def full_batch_optimize(steps:int, lr:float,
             print(f"Step {i}, loss {l}, grad_norm {torch.sqrt(sum(torch.norm(param.grad)**2 for param in PARAMETERS))}")
         # Take a step
         opt.step()
-        # Clamp temperatures in a way that preserves gradients
+        # Clamp temperatures
         for item in ITEMS:
-            tens = item.params["log_temp"]
-            '''
-            if tens < log(min_temperature):
-                correction = (log(min_temperature) - tens).detach()
-                tens.data += correction
-            if tens > log(max_temperature):
-                correction = (log(max_temperature) - tens).detach()
-                tens.data += correction
-            '''
-            tens += (torch.clamp(tens, log(min_temperature), log(max_temperature)) - tens).detach()
-
+            item.params["log_temp"].clamp_(log(min_temperature), log(max_temperature))
+            
 
 '''
 Notes on temperature behavior:
