@@ -162,7 +162,7 @@ Things that could be done:
 '''
 
 '''
-Tests
+TESTS
 '''
 def test_logP():
     print(torch.exp(logP(Item('a', 0, 1), Item('b', 0, 1)))) # 0.5
