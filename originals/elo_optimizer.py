@@ -14,24 +14,24 @@ To use elo_optimizer.py from your own file:
     - Interact directly with the global lists for other operations  
 '''
 import numpy as np
-from numpy import log
 import torch
-from torch import stack, logsumexp, tensor
+from torch import stack, logsumexp
 from torch.nn.functional import log_softmax
 from dataclasses import dataclass
 from typing import Iterable, Callable
 
 def list_filter(f:Callable, lst:Iterable) -> list:
-    '''Same as filter, but returns a list instead of filter object.'''
-    return [*filter(f, lst)]
+    '''Same as filter, but returns a list instead of filter object.\n\nShorthand for [x for x in lst if f(x)].'''
+    return [x for x in lst if f(x)]
 
 class Item:
     def store(self, elo, temperature):
+        elo = float(elo)
         # Remove old parameters from PARAMETERS
-        PARAMETERS[:] = list_filter(lambda p: p not in self.parameters(), PARAMETERS)
+        PARAMETERS[:] = [p for p in PARAMETERS if p not in self.parameters()]
         # Store new parameters
-        self.params["elo"] = tensor(float(elo), requires_grad=True)
-        self.params["log_temp"] = tensor(log(temperature), requires_grad=True)
+        self.params["elo"] = torch.tensor(elo, requires_grad=True)
+        self.params["log_temp"] = torch.tensor(np.log(temperature), requires_grad=True)
         PARAMETERS.extend(self.parameters())
 
     def elo(self):
@@ -67,14 +67,14 @@ class Lottery:
         # Multiply temperatures by weights then logsumexp
         temps = stack([item.temperature() for item in self.items])
         return logsumexp(self.weights * temps, dim=0)
-
+    
     def __init__(self, items:Iterable[Item], weights, name_joiner:str="+"):
         assert len(items) == len(weights) > 0 and all(isinstance(item, Item) for item in items)
         name_array = [f"{weight}*{item.name}" for item, weight in zip(items, weights)]
         self.name = name_joiner.join(name_array)
         self.items = items
         # Normalize weights to sum to 1
-        self.weights = tensor(weights, requires_grad=False) / sum(weights)
+        self.weights = torch.tensor(weights, requires_grad=False) / sum(weights)
         LOTTERIES.append(self)
 
     def delete(self):
@@ -142,13 +142,13 @@ def full_batch_optimize(steps:int, lr:float,
         opt.step()
         # Clamp temperatures in a way that preserves gradients
         for item in ITEMS:
-            tens = item.params["log_temp"]
-            if tens < log(min_temperature):
-                correction = (log(min_temperature) - tens).detach()
-                tens.data += correction
-            if tens > log(max_temperature):
-                correction = (log(max_temperature) - tens).detach()
-                tens.data += correction
+            tensor = item.params["log_temp"]
+            if tensor < np.log(min_temperature):
+                correction = (np.log(min_temperature) - tensor).detach()
+                tensor.data += correction
+            if tensor > np.log(max_temperature):
+                correction = (np.log(max_temperature) - tensor).detach()
+                tensor.data += correction
 
 
 '''
