@@ -32,8 +32,7 @@ class Deletable:
 
 class IL_base(Deletable):
     def normalized_elo(self):
-        median = torch.median(stack([item.elo() for item in ITEMS]))
-        return self.elo() - median
+        return self.elo() - torch.median(stack([item.elo() for item in ITEMS]))
 
 class Item(IL_base):
     def store(self, elo, temperature):
