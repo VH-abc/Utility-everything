@@ -23,18 +23,35 @@ from typing import Iterable, Callable
 def purify(lst, condition:Callable):
     lst[:] = [*filter(condition, lst)]
 
+# Uses *is* if to_remove is an iterable (not "==" or "in")
 def remove_from(lst, to_remove: Iterable | Callable):
     if isinstance(to_remove, Iterable):
-        to_remove = lambda x: x in to_remove
+        to_remove = lambda x, banned=to_remove: any(x is y for y in banned)
     purify(lst, lambda x: not to_remove(x))
 
-class Item:
+class GlobalListMember:
+    def __init__(self, globals:Iterable[list], dependencies:Iterable["GlobalListMember"]):
+        self.globals = globals
+        for lst in globals:
+            lst.append(self)
+        self.dependents = []
+        for dep in dependencies:
+            dep.dependents.append(self)
+        self.alive = True
+    def delete(self):
+        for lst in self.globals:
+            lst.remove(self)
+        self.alive = False
+        for dep in self.dependents:
+            if dep.alive:
+                dep.delete()
+
+class Item(GlobalListMember):
     def store(self, elo, temperature):
-        elo = float(elo)
         # Remove old parameters from PARAMETERS
         remove_from(PARAMETERS, self.parameters())
         # Store new parameters
-        self.params["elo"] = torch.tensor(elo, requires_grad=True)
+        self.params["elo"] = torch.tensor(float(elo), requires_grad=True)
         self.params["log_temp"] = torch.tensor(np.log(temperature), requires_grad=True)
         PARAMETERS.extend(self.parameters())
 
@@ -50,21 +67,16 @@ class Item:
         self.name = name
         self.params:dict[str, torch.Tensor] = {}
         self.store(elo, temperature) # This also adds the parameters to PARAMETERS
-        ITEMS.append(self)
+        super().__init__(globals=[ITEMS], dependencies=[])
 
     def delete(self):
         remove_from(PARAMETERS, self.parameters())
-        remove_from(RESULTS, lambda r: self in [r.winner, r.loser])
-        for l in LOTTERIES:
-            if self in l.items:
-                l.delete()
-        ITEMS.remove(self)
-        
+        super().delete()
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
     
-class Lottery:
+class Lottery(GlobalListMember):
     def elo(self):
         return torch.sum(self.weights * stack([item.elo() for item in self.items]))
     def temperature(self):
@@ -74,30 +86,24 @@ class Lottery:
     
     def __init__(self, items:Iterable[Item], weights, name_joiner:str="+"):
         assert len(items) == len(weights) > 0 and all(isinstance(item, Item) for item in items)
-        self.items = items
-        # Normalize weights to sum to 1
-        self.weights = torch.tensor(weights, requires_grad=False) / sum(weights)
-        name_array = [f"{weight}*{item.name}" for item, weight in zip(self.items, self.weights)]
+        name_array = [f"{weight}*{item.name}" for item, weight in zip(items, weights)]
         self.name = name_joiner.join(name_array)
-        LOTTERIES.append(self)
+        self.items = items
+        self.weights = torch.tensor(weights, requires_grad=False)
+        assert torch.all(self.weights >= 0) and torch.isclose(torch.sum(self.weights), torch.tensor(1.0))
+        super().__init__(globals=[LOTTERIES], dependencies=items)
 
-    def delete(self):
-        remove_from(RESULTS, lambda r: self in [r.winner, r.loser])
-        remove_from(LOTTERIES, [self])
     def normalized_elo(self):
         median = torch.median(stack([item.elo() for item in ITEMS]))
         return self.elo() - median
 
-@dataclass
 # Note: Always create a new result with add_result (assuming you want it to be stored to RESULTS)
-class Result:
-    winner: Item | Lottery
-    loser: Item | Lottery
-    n_copies: int = 1
+class Result(GlobalListMember):
+    def __init__(self, winner:Item|Lottery, loser:Item|Lottery, n_copies:int=1):
+        self.winner, self.loser, self.n_copies = winner, loser, n_copies
+        super().__init__(globals=[RESULTS], dependencies=[winner, loser])
     def get_logP(self):
         return logP(self.winner, self.loser) * self.n_copies
-    def delete(self):
-        remove_from(RESULTS, [self])
 
 # GLOBALS
 ITEMS:list[Item] = []
@@ -116,8 +122,7 @@ def add_result(winner:Item, loser:Item):
     elif MODE == "overwrite":
         same_pair = lambda x: (x.winner == winner and x.loser == loser) or (x.winner == loser and x.loser == winner)
         remove_from(RESULTS, same_pair)
-    RESULTS.append(Result(winner, loser))
-    return RESULTS[-1]
+    return Result(winner, loser)
 
 def logP(winner, loser):
     temps = stack([winner.temperature(), loser.temperature()])

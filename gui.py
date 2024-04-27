@@ -24,10 +24,11 @@ def list_filter(f:Callable, lst:Iterable) -> list:
     '''Same as filter, but returns a list instead of filter object.\n\nShorthand for [x for x in lst if f(x)].'''
     return [x for x in lst if f(x)]
 
-class Node:
+class Node(GlobalListMember):
     def __init__(self, canvas:tk.Canvas, item:Item|Lottery, 
                  x:float, y:float,
-                 size:float=35, cosmetics=None):
+                 size:float=35, cosmetics=None,
+                 dependents:Iterable[GlobalListMember]=None):
         if cosmetics is None:
             rgb = np.random.randint(0, 256, 3)
             # Make it light by shifting s.t. the max is 255
@@ -38,7 +39,9 @@ class Node:
         self.text_id = self.canvas.create_text(x, y, 
                                                text=self.generate_text(),
                                                anchor=tk.CENTER, justify=tk.CENTER)
-        NODES.append(self)
+        super().__init__(globals=[NODES], dependencies=[item])
+        if dependents:
+            self.dependents.extend(dependents)
     def goto(self, x, y):
         self.x, self.y = x, y
         self.canvas.coords(self.id, x-self.size, y-self.size, x+self.size, y+self.size)
@@ -52,15 +55,11 @@ class Node:
         temp_round = lambda x: round(x, 2 if x < 0.3 else 1)
         return f"{self.item.name}\n{elo_round(self.item.normalized_elo().item())} ± {temp_round(self.item.temperature().item())}" if self.item.temperature() < temp_limit else f"{self.item.name}\n??"
     def delete(self):
-        self.item.delete()
-        connected = lambda arrow: arrow.winner_node == self or arrow.loser_node == self
-        for arrow in filter(connected, ARROWS):
-            arrow.delete()
         self.canvas.delete(self.id)
         self.canvas.delete(self.text_id)
-        NODES.remove(self) 
+        super().delete()
 
-class Arrow:
+class Arrow(GlobalListMember):
     def offset_to_vector(self):
         x1, y1, x2, y2 = self.winner_node.x, self.winner_node.y, self.loser_node.x, self.loser_node.y
         if x1 == x2 and y1 == y2:
@@ -84,12 +83,12 @@ class Arrow:
         self.canvas.itemconfig(self.text_id, text=str(self.result.n_copies), anchor=tk.CENTER, font=("Arial", 10, "bold") if self.result.n_copies > 1 else ("Arial", 10))
         
     def delete(self):
-        self.result.delete()
-        ARROWS.remove(self)
         self.canvas.delete(self.id)
         self.canvas.delete(self.text_id)
+        super().delete()
 
-    def __init__(self, canvas:tk.Canvas, result:Result):
+    def __init__(self, canvas:tk.Canvas, result:Result,
+                 dependents:Iterable[GlobalListMember]=None):
         self.canvas, self.result = canvas, result
         # Find nodes
         winner_nodes = list_filter(lambda node: node.item == self.result.winner, NODES)
@@ -104,13 +103,15 @@ class Arrow:
         if complements:
             self.offset = 10
             complements[0].offset = 10
-        ARROWS.append(self)
         # Canvas stuff
         x1, y1, x2, y2 = self.get_endpoints()
         self.id = canvas.create_line(x1, y1, x2, y2, arrow=tk.LAST)
         self.text_id = canvas.create_text((x1+x2)/2, (y1+y2)/2,
                                           text=str(result.n_copies), anchor=tk.CENTER,
                                           font=("Arial", 10, "bold") if result.n_copies > 1 else ("Arial", 10))
+        super().__init__(globals=[ARROWS], dependencies=[result, self.winner_node, self.loser_node])
+        if dependents:
+            self.dependents.extend(dependents)
 
 # GLOBALS
 NODES:list[Node] = []
@@ -167,7 +168,7 @@ class GUI:
             name = chr(65 + len(NODES))
             median_elo = torch.median(stack([item.elo() for item in ITEMS])) if ITEMS else 0
             item = Item(name, median_elo, 1)
-            Node(self.canvas, item, event.x, event.y)
+            node = Node(self.canvas, item, event.x, event.y, dependents=[item])
         # Arrows and lotteries (similar logic because they both involve selecting two nodes)
         if self.mode in ["arrow", "lottery"]:
             clicked = lambda node: np.linalg.norm(np.array([node.x, node.y]) - np.array([event.x, event.y])) < node.size
@@ -184,7 +185,7 @@ class GUI:
                             if existing_arrows:
                                 existing_arrows[0].update()
                             else:
-                                Arrow(self.canvas, result)
+                                Arrow(self.canvas, result, dependents=[result])
                         elif self.mode == "lottery" and isinstance(first.item, Item) and isinstance(second.item, Item):
                             # Pop up a window to input the weight of the first item
                             weight = simpledialog.askfloat("Lottery", f"Enter the weight of {first.item.name} (0-1)")
@@ -199,7 +200,7 @@ class GUI:
                                 c1, c2 = [self.str_to_rgb(node.cosmetics["fill"]) for node in [first, second]]
                                 color = (w1*c1 + w2*c2).round().astype(int)
                                 cosmetics = {"fill": f"#{color[0]:02x}{color[1]:02x}{color[2]:02x}", "outline": "black"}
-                                Node(self.canvas, lottery, x, y, cosmetics=cosmetics)
+                                Node(self.canvas, lottery, x, y, cosmetics=cosmetics, dependents=[lottery])
                     self.cache = []
         # Delete mode
         if self.mode == "delete":
